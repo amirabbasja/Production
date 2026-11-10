@@ -333,8 +333,8 @@ def main(argv=None):
                 return job_status(1, "job-1", gpu.read(), None, job._progress_epoch)
 
             updates = resources.enter_context(TelegramUpdates(config, snapshot))
-            updates.event("Job 1 job-1 starting")
-            resources.callback(updates.event, "Job 1 job-1 finished")
+            updates.event("Training run 1 (job-1) starting")
+            resources.callback(updates.event, "Training run 1 (job-1) finished")
             progress.update(snapshot(), force=True)
             while job.step():
                 progress.update(snapshot())

@@ -22,7 +22,7 @@ from . import training_constants as wire
 from .fixed_constants import FixedAlias, constant_text
 from .training_identity import validate_login_identity
 
-_STATUS_TEMPLATE = 'Training rate(avg) {} | GPU {} | accepted={} rejected={} | submitted={} batches={} attempts={} stale={}'
+_STATUS_TEMPLATE = 'Training rate(avg) {} | GPU {} | verified={} invalid={} | submitted={} batches={} attempts={} skipped={}'
 _LOG_CONNECTED = FixedAlias('training.log.coordinator_session_authenticated')
 _LOG_JOB = FixedAlias('training.log.coordinator_batch_revision')
 _LOG_JOB_VERIFIED = FixedAlias('training.log.batch_header_verified_no_submissions')

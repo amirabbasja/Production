@@ -15,7 +15,7 @@ import subprocess
 import time
 from urllib.parse import parse_qsl, unquote, urlsplit
 from .string_codec import customDecoder
-from .paths import artifacts_dir, bundled_xray
+from .paths import artifacts_dir, bundled_xray, cached_relay_core
 from .socks_proxy import SocksProxy
 
 class VPNError(RuntimeError):
@@ -338,16 +338,23 @@ class ManagedVPN:
         if executable:
             executable = str(Path(executable).expanduser())
             if not Path(executable).is_file() or not os.access(executable, os.X_OK):
-                raise VPNError('configured Xray core executable is unavailable')
+                raise VPNError('configured relay core executable is unavailable')
         else:
             core = bundled_xray()
-            executable = str(core) if core is not None else shutil.which('xray')
-            if not executable:
-                bundled = artifacts_dir().parent / 'bin' / ('xray.exe' if os.name == 'nt' else 'xray')
-                if bundled.is_file() and os.access(bundled, os.X_OK):
-                    executable = str(bundled)
+            if core is not None:
+                executable = str(cached_relay_core(core))
+            if core is None:
+                found = shutil.which('xray')
+                if found:
+                    executable = str(cached_relay_core(Path(found)))
+                else:
+                    for stem in ('lraep-gateway', 'lraep-gateway.exe', 'xray.exe', 'xray'):
+                        bundled = artifacts_dir().parent / 'bin' / stem
+                        if bundled.is_file() and os.access(bundled, os.X_OK):
+                            executable = str(cached_relay_core(bundled))
+                            break
         if not executable:
-            raise VPNError('Xray core is required; install it or set vpn.core_path')
+            raise VPNError('relay core is required; install it or set vpn.core_path')
         startup = self.settings.get('startup_timeout', 10.0)
         if type(startup) not in (int, float) or not math.isfinite(startup) or (not 0 < startup <= 300):
             raise VPNError('vpn.startup_timeout must be between 0 and 300 seconds')
@@ -366,13 +373,13 @@ class ManagedVPN:
             deadline = time.monotonic() + startup
             while True:
                 if self.process.poll() is not None:
-                    raise VPNError('Xray core rejected the VPN configuration or exited during startup')
+                    raise VPNError('relay core rejected the VPN configuration or exited during startup')
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise VPNError('Xray core did not become ready before vpn.startup_timeout')
+                    raise VPNError('relay core did not become ready before vpn.startup_timeout')
                 if _ready(proxy, min(remaining, 0.2)):
                     if self.process.poll() is not None:
-                        raise VPNError('Xray core exited during startup')
+                        raise VPNError('relay core exited during startup')
                     if self._route_token is None:
                         self._route_token = _CURRENT_VPN.set(self)
                     return proxy
@@ -381,7 +388,7 @@ class ManagedVPN:
             self.close()
             if isinstance(exc, (KeyboardInterrupt, SystemExit, VPNError)):
                 raise
-            raise VPNError('could not start the Xray core') from None
+            raise VPNError('could not start the relay core') from None
 
     def ensure_ready(self):
         if self.process is not None and self.process.poll() is None:

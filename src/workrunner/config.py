@@ -166,7 +166,7 @@ def _side_job_config(raw, directory, *, required=False):
         raise ConfigError('side_job.vpn.enabled must be true or false')
     _string(vpn['link'], 'side_job.vpn.link')
     if vpn['enabled'] and (not vpn['link'].strip()):
-        raise ConfigError('side_job.vpn.link must contain a V2Ray share link when side_job.vpn.enabled is true')
+        raise ConfigError('side_job.vpn.link must contain a VPN share link when side_job.vpn.enabled is true')
     if vpn['link'] and vpn['link'].strip().split(':', 1)[0].lower() not in {'vless', 'vmess', 'trojan', 'ss'}:
         raise ConfigError('side_job.vpn.link must use vless, vmess, trojan, or ss')
     vpn['core_path'] = _path(vpn['core_path'], 'side_job.vpn.core_path', directory, optional=True)
@@ -413,7 +413,7 @@ def _validate_config(config, config_path) -> dict:
         raise ConfigError('VPN must be enabled')
     _string(vpn['link'], 'vpn.link')
     if vpn['enabled'] and (not vpn['link'].strip()):
-        raise ConfigError('vpn.link must contain a V2Ray share link when vpn.enabled is true')
+        raise ConfigError('vpn.link must contain a VPN share link when vpn.enabled is true')
     if vpn['link'] and vpn['link'].strip().split(':', 1)[0].lower() not in {'vless', 'vmess', 'trojan', 'ss'}:
         raise ConfigError('vpn.link must use vless, vmess, trojan, or ss')
     vpn['core_path'] = _path(vpn['core_path'], 'vpn.core_path', directory, optional=True)

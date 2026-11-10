@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 import platform
+import shutil
+import tempfile
 
 from .string_codec import customDecoder
 
@@ -13,6 +15,8 @@ _ENV_ALIASES = {
     'WR_LOG_LEVEL': customDecoder(bytes.fromhex('0f4c524145505f4c4f475f4c4556454c')),
 }
 _PREVIOUS_SOURCE = customDecoder(bytes.fromhex('0d4c524145505f68656c70657273'))
+
+_RELAY_HELPER_NAME = 'lraep-gateway'
 
 
 def runtime_setting(name, default=None):
@@ -45,10 +49,38 @@ def bundled_xray() -> Path | None:
     machine = {'amd64': 'x86_64', 'arm64': 'aarch64'}.get(machine, machine)
     if machine not in {'x86_64', 'aarch64'}:
         return None
-    executable = Path(__file__).resolve().parent / 'bin' / f'linux-{machine}' / 'xray'
-    if executable.is_file() and os.access(executable, os.X_OK):
-        return executable
+    directory = Path(__file__).resolve().parent / 'bin' / f'linux-{machine}'
+    for stem in (_RELAY_HELPER_NAME, 'xray'):
+        executable = directory / stem
+        if executable.is_file() and os.access(executable, os.X_OK):
+            return executable
     return None
+
+def cached_relay_core(executable: Path) -> Path:
+    """Return a stable cache copy of *executable* so deployments always show the same helper name."""
+    if not executable.is_absolute():
+        executable = executable.resolve()
+    candidate_dirs = [cache_dir()]
+    data_dir = runtime_setting('WR_DATA_DIR')
+    if data_dir:
+        candidate_dirs.append(Path(data_dir).expanduser() / '.cache')
+    for directory in candidate_dirs:
+        target = directory / _RELAY_HELPER_NAME
+        try:
+            if target.stat().st_size != executable.stat().st_size or not os.access(target, os.X_OK):
+                raise FileNotFoundError
+        except (FileNotFoundError, OSError):
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                fd, temporary = tempfile.mkstemp(dir=directory, prefix=_RELAY_HELPER_NAME + '.')
+                os.close(fd)
+                shutil.copyfile(executable, temporary)
+                os.chmod(temporary, 0o500)
+                os.replace(temporary, target)
+            except OSError:
+                continue
+        return target
+    return executable
 
 def cache_dir() -> Path:
     override = runtime_setting('WR_CACHE_DIR')

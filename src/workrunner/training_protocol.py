@@ -13,7 +13,7 @@ _INVALID_COMPACT_TRAINING_THRESHOLD = FixedAlias('training.validation.batch_head
 _BAD_DEVICE_SEED = 'S7 device seed must contain eight bytes'
 _BAD_RESULT = FixedAlias('training.validation.batch_submission_fields_invalid')
 _BAD_ACCOUNT = FixedAlias('training.validation.batch_account_identity_whitespace')
-_BAD_RATE = 'training rate must be a nonnegative finite number in H/s'
+_BAD_RATE = 'training rate must be a nonnegative finite number in units/s'
 _UPDATE_PAYLOAD = FixedAlias('training.label.batch_update_payload')
 _UPDATE_SIZE_ERROR = FixedAlias('training.validation.batch_update_payload_length')
 _UPDATE_SCHEMA_ERROR = FixedAlias('training.validation.batch_update_schema')
@@ -22,7 +22,7 @@ _BAD_VERSION = FixedAlias('training.validation.batch_generation_attestation_revi
 _BATCH_TRAINING_THRESHOLD = FixedAlias('training.label.batch_acceptance_bound')
 _MISSING_RESULT = FixedAlias('training.validation.batch_and_compact_attestation_required')
 _BAD_COMPRESSION = FixedAlias('training.validation.batch_submission_compression_unsupported')
-_SEED_MISMATCH = 'S7 share device seed does not match its job'
+_SEED_MISMATCH = 'S7 submission device seed does not match its job'
 
 _HEADER_MASK = FixedAlias('training.format.batch_header_mask')
 
