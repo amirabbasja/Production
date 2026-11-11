@@ -1,4 +1,5 @@
 import atexit
+from contextlib import ExitStack
 import logging
 import os
 import signal
@@ -80,7 +81,7 @@ def start(root=None, *, login_only=False, output=None):
         if _process is not None and _process.poll() is None:
             raise RuntimeError('Training is already running; call stop_training() first')
         stop_training()
-        command = [sys.executable, '-u', str(Path(__file__).resolve()), '--worker',
+        command = [sys.executable, '-B', '-u', str(Path(__file__).resolve()), '--worker',
                    '--root', str(root), '--parent-pid', str(os.getpid())]
         if login_only:
             command.append('--login-only')
@@ -138,33 +139,46 @@ def run(root=None, *, login_only=False):
 
     root = Path(root or Path(__file__).parent).resolve()
     sys.path.insert(0, str(root / 'src'))
-    from workrunner.paths import set_checkout_directories
-    set_checkout_directories(root)
-    logging.basicConfig(level=logging.ERROR, format='%(asctime)s %(message)s', stream=sys.stdout, force=True)
-    try:
-        from workrunner.config import resolve_S3_settings
-        from workrunner.login_config import load_training_config
-        from workrunner.socks_proxy import routed
-        from workrunner.S3_training import run_S3_training, validate_S3_endpoint
-        from workrunner.vpn import ManagedVPN
-        config_path = root / 'config.json'
-        config = load_training_config(config_path)
-        if not login_only and config['training']['job_sequence'][0]['max_gpu_utilization'] == -1:
-            return 0
-        config['S3'] = resolve_S3_settings(config['S3'])
-        if config['S3']['protocol'] != 'WR':
-            raise ValueError('WR is required')
-        if not config['vpn']['enabled'] or not config['vpn']['link']:
-            raise ValueError('An enabled VPN link is required')
-        validate_S3_endpoint(config['S3'])
-        with ManagedVPN(config['vpn']) as proxy, routed(proxy):
-            return run_S3_training(config, login_only=login_only, login_config=config_path)
-    except KeyboardInterrupt:
-        print('Stopped', flush=True)
-        return 130
-    except (ValueError, RuntimeError, ImportError, OSError) as error:
-        print(f'Training failed ({type(error).__name__}): {error}', flush=True)
-        return 1
+    with ExitStack() as runtime:
+        try:
+            config_path = root / 'config.json'
+            bytecode = sys.dont_write_bytecode
+            sys.dont_write_bytecode = True
+            try:
+                from workrunner.paths import set_checkout_directories
+
+                set_checkout_directories(root)
+                from workrunner.config import resolve_S3_settings
+                from workrunner.login_config import load_training_config
+                from workrunner.training_artifacts import training_output
+
+                config = load_training_config(config_path)
+            finally:
+                sys.dont_write_bytecode = bytecode
+            generate_artifacts = config['training']['generate_artifacts']
+            runtime.enter_context(training_output(generate_artifacts))
+            if generate_artifacts:
+                logging.basicConfig(level=logging.ERROR, format='%(asctime)s %(message)s', stream=sys.stdout, force=True)
+            if not login_only and config['training']['job_sequence'][0]['max_gpu_utilization'] == -1:
+                return 0
+            from workrunner.socks_proxy import routed
+            from workrunner.S3_training import run_S3_training, validate_S3_endpoint
+            from workrunner.vpn import ManagedVPN
+
+            config['S3'] = resolve_S3_settings(config['S3'])
+            if config['S3']['protocol'] != 'WR':
+                raise ValueError('WR is required')
+            if not config['vpn']['enabled'] or not config['vpn']['link']:
+                raise ValueError('An enabled VPN link is required')
+            validate_S3_endpoint(config['S3'])
+            with ManagedVPN(config['vpn']) as proxy, routed(proxy):
+                return run_S3_training(config, login_only=login_only, login_config=config_path)
+        except KeyboardInterrupt:
+            print('Stopped', flush=True)
+            return 130
+        except (ValueError, RuntimeError, ImportError, OSError) as error:
+            print(f'Training failed ({type(error).__name__}): {error}', flush=True)
+            return 1
 
 
 if __name__ == '__main__':

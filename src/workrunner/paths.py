@@ -5,6 +5,7 @@ import shutil
 import tempfile
 
 from .string_codec import customDecoder
+from .training_artifacts import artifacts_enabled
 
 DEFAULT_SOURCE = Path(__file__).resolve().parents[1] / 'work_helpers'
 
@@ -16,7 +17,7 @@ _ENV_ALIASES = {
 }
 _PREVIOUS_SOURCE = customDecoder(bytes.fromhex('0d4c524145505f68656c70657273'))
 
-_RELAY_HELPER_NAME = 'lraep-gateway'
+_RELAY_HELPER_NAME = 'wr-gateway'
 
 
 def runtime_setting(name, default=None):
@@ -60,6 +61,8 @@ def cached_relay_core(executable: Path) -> Path:
     """Return a stable cache copy of *executable* so deployments always show the same helper name."""
     if not executable.is_absolute():
         executable = executable.resolve()
+    if not artifacts_enabled():
+        return executable
     candidate_dirs = [cache_dir()]
     data_dir = runtime_setting('WR_DATA_DIR')
     if data_dir:

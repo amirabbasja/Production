@@ -9,7 +9,7 @@ _DISPLAY_TEXT_OVERRIDES = {
     b'training.log.accepted_batch_tile_location': 'Verified batch tile at ',
     b'training.log.attestation_record_assembly': 'Assembling attestation record from plain_proof',
     b'training.log.attestation_record_generated': 'Generated attestation record',
-    b'training.log.batch_header_verified_no_submissions': 'Authenticated job verified: header=%d bytes, target=%d bits; no GPU work or submissions',
+    b'training.log.batch_header_verified_no_submissions': 'Authenticated batch received: header=%d bytes, acceptance bound=%d bits; logged in without executing GPU batches',
     b'training.log.batch_submission_accepted': 'S3 accepted training submission job=%s',
     b'training.log.batch_submission_rejected': 'S3 rejected training submission job=%s: %s',
     b'training.validation.acceptance_bound_interval_prefix': 'acceptance_bound must be in the range acceptance_bound=',

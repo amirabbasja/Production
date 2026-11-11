@@ -6,6 +6,9 @@ import sys
 import threading
 import time
 import unicodedata
+
+from .training_artifacts import artifacts_enabled
+
 _ANSI_ESCAPE = re.compile('\\x1b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\\x07]*?(?:\\x07|\\x1b\\\\)|[@-_])')
 
 def _plain_text(text: str) -> str:
@@ -60,7 +63,7 @@ class LiveProgress:
         self._rendered_text = None
         self._last_update = -math.inf
         self._active = False
-        self._closed = False
+        self._closed = not artifacts_enabled()
 
     def _columns(self) -> int:
         try:

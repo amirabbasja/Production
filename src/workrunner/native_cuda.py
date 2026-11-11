@@ -1,5 +1,5 @@
 import ctypes
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import hashlib
 import logging
 import os
@@ -10,6 +10,7 @@ import threading
 import numpy as np
 import torch
 from .paths import cache_dir
+from .training_artifacts import artifacts_enabled
 try:
     import fcntl
 except ImportError:
@@ -51,7 +52,7 @@ def load_native(device='cuda:0'):
         compiler = shutil.which('nvcc')
         if not compiler:
             raise NativeUnavailable('nvcc is unavailable; install a compatible CUDA toolkit')
-        names = ('transcripts.cu', 'hashing.cu', 'preparation.cu', 'tree.cu', 'runtime.cu', 'digest_core.cuh')
+        names = ('transcripts.cu', 'candidate_filter.cu', 'preparation.cu', 'tree.cu', 'runtime.cu', 'digest_core.cuh')
         paths = [SOURCE / name for name in names]
         if any((not path.is_file() for path in paths)):
             raise NativeUnavailable('native CUDA source files are incomplete')
@@ -59,11 +60,17 @@ def load_native(device='cuda:0'):
         for path in paths:
             fingerprint.update(path.read_bytes())
         cache = cache_dir() / 'native'
-        cache.mkdir(parents=True, exist_ok=True)
         library = cache / f'WR-sm{architecture}-{fingerprint.hexdigest()[:16]}.so'
-        with (cache / 'build.lock').open('w') as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        allow_build = artifacts_enabled()
+        if allow_build:
+            cache.mkdir(parents=True, exist_ok=True)
+        build_lock = (cache / 'build.lock').open('w') if allow_build else nullcontext()
+        with build_lock as lock:
+            if lock is not None:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             if not library.exists():
+                if not allow_build:
+                    raise NativeUnavailable('no cached native CUDA library is available')
                 LOG.info('Building native CUDA kernels for sm_%s (cached after this build)', architecture)
                 temporary = library.with_suffix(f'.{os.getpid()}.tmp.so')
                 command = [compiler, '-O3', '-std=c++17', '--shared', '-Xcompiler=-fPIC', f'-gencode=arch=compute_{architecture},code=sm_{architecture}', '-I', str(SOURCE), *[str(p) for p in paths if p.suffix == '.cu'], '-o', str(temporary)]
@@ -92,7 +99,8 @@ def available(device='cuda:0') -> bool:
         load_native(device)
         return True
     except NativeUnavailable as exc:
-        _UNAVAILABLE[destination] = str(exc)
+        if artifacts_enabled():
+            _UNAVAILABLE[destination] = str(exc)
         LOG.warning('Native CUDA unavailable: %s; using the PyTorch reference path', exc)
         return False
 
@@ -243,7 +251,7 @@ def transcripts_device(a, bt, *, variant=0):
 @torch.inference_mode()
 def match_candidates(transcripts, key: bytes, training_threshold: int, *, capacity=64):
     if not isinstance(transcripts, torch.Tensor) or not transcripts.is_cuda or transcripts.dtype != torch.int32 or (transcripts.ndim != 3) or (transcripts.shape[-1] != 16) or (type(training_threshold) is not int) or (not 0 <= training_threshold < 2 ** 256):
-        raise ValueError('native hashing requires CUDA int32 transcripts and a 256-bit target')
+        raise ValueError('native digest kernels require CUDA int32 transcripts and a 256-bit acceptance bound')
     if type(capacity) is not int or capacity < 1:
         raise ValueError('candidate capacity must be positive')
     transcripts = transcripts.contiguous()

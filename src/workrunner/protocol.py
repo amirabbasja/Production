@@ -169,15 +169,15 @@ def prepare_signal_batch(header, cert_version: int, config: TrainingConfig, a: t
 def adjusted_training_threshold(base_training_threshold: int, config: TrainingConfig) -> int:
     from workrunner import protocol_types as pm
     if not 0 < base_training_threshold < 2 ** 256:
-        raise ValueError('node target must be a positive 256-bit integer')
+        raise ValueError('coordinator acceptance bound must be a positive 256-bit integer')
     result = pm.scaled_training_threshold(base_training_threshold, config.official_config())
     if result is None:
-        raise ValueError('target scaling overflows; choose a harder test-network target')
+        raise ValueError('acceptance-bound scaling overflows; request a looser acceptance bound from the coordinator')
     return result
 
 def matching_tiles(transcripts: np.ndarray, key: bytes, training_threshold: int):
-    if len(key) != 32 or not 0 <= training_threshold < 2 ** 256:
-        raise ValueError('invalid transcript hash key or target')
+    if not 0 < training_threshold < 2 ** 256 or not isinstance(key, bytes) or len(key) != 32:
+        raise ValueError('invalid commitment digest key or acceptance bound')
     for row in range(transcripts.shape[0]):
         for col in range(transcripts.shape[1]):
             message = transcripts[row, col].astype('<u4').tobytes()

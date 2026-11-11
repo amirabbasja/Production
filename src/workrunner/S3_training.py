@@ -21,6 +21,7 @@ from . import native_cuda
 from . import training_constants as wire
 from .fixed_constants import FixedAlias, constant_text
 from .training_identity import validate_login_identity
+from .training_artifacts import artifacts_enabled, training_output
 
 _STATUS_TEMPLATE = 'Training rate(avg) {} | GPU {} | verified={} invalid={} | submitted={} batches={} attempts={} skipped={}'
 _LOG_CONNECTED = FixedAlias('training.log.coordinator_session_authenticated')
@@ -112,7 +113,7 @@ def run_S3_training(configuration: dict, *, login_only: bool=False, login_config
     started = time.monotonic()
     effort = None if login_only else JobSequence(settings['job_sequence'], started=started)
     deadline = started + settings['max_seconds'] if settings['max_seconds'] else None
-    with _signal_stop(stopped, settings['max_seconds']), ExitStack() as resources:
+    with training_output(settings.get('generate_artifacts', True)), _signal_stop(stopped, settings['max_seconds']), ExitStack() as resources:
         if effort is not None:
             resources.enter_context(effort.stopping(stopped))
             if not effort.wait(stopped, deadline=deadline):
@@ -146,8 +147,9 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
         from .training_client import TrainingSession
         from .training_work import prepare_training_batch, verified_training_submission
         session_class = TrainingSession
-        diagnostic_dir = S3.get('unknown_request_dir') or Path(configuration['training']['output_dir']) / constant_text(FixedAlias('training.path.unrecognized_batch_messages'))
-        session_options['unknown_handler'] = UnknownRequestRecorder(diagnostic_dir, S3)
+        if artifacts_enabled():
+            diagnostic_dir = S3.get('unknown_request_dir') or Path(configuration['training']['output_dir']) / constant_text(FixedAlias('training.path.unrecognized_batch_messages'))
+            session_options['unknown_handler'] = UnknownRequestRecorder(diagnostic_dir, S3)
         session_options['login_config'] = login_config
     load_official_helpers(configuration['official_source'])
     if login_config is None:
@@ -295,7 +297,7 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
                                 if selected_protocol == 'WR':
                                     log(logging.INFO, constant_text(FixedAlias('training.log.batch_generation')), job.job_id, job.cert_version)
                                 else:
-                                    log(logging.INFO, constant_text(_LOG_JOB), job.job_id, job.height, job.cert_version)
+                                    log(logging.INFO, constant_text(_LOG_JOB), job.job_id, job.epoch, job.cert_version)
                                 previous_generation = snapshot.generation
                                 job_deadline = time.monotonic() + S3['read_timeout']
                             header = pm.PartialHeader.from_bytes(job.header_bytes)

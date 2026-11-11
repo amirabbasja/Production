@@ -67,7 +67,7 @@ class TrainingJob(S3Job):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.cert_version != 3 or self.height != 0:
+        if self.cert_version != 3 or self.epoch != 0:
             raise S3ProtocolError(constant_text(FixedAlias('training.validation.batch_generation_unsupported')))
         if not isinstance(self.update_payload, bytes) or len(self.update_payload) != 200:
             raise S3ProtocolError(constant_text(_UPDATE_SIZE_ERROR))
@@ -179,7 +179,7 @@ class TrainingDialect:
             raise S3ProtocolError(constant_text(_BAD_VERSION))
         payload = _hex_bytes(result[1], 200, constant_text(_UPDATE_PAYLOAD))
         training_threshold_bytes = _hex_bytes(result[2], 32, constant_text(_BATCH_TRAINING_THRESHOLD))
-        return TrainingJob(job_id=_text(result[3], wire.JOB_ID, 128), header_bytes=decode_update_payload(result[1]), height=0, cert_version=3, training_threshold=int.from_bytes(training_threshold_bytes, 'little'), encoded_training_threshold=result[2], update_payload=payload, device_seed=device_seed)
+        return TrainingJob(job_id=_text(result[3], wire.JOB_ID, 128), header_bytes=decode_update_payload(result[1]), epoch=0, cert_version=3, training_threshold=int.from_bytes(training_threshold_bytes, 'little'), encoded_training_threshold=result[2], update_payload=payload, device_seed=device_seed)
 
     @staticmethod
     def submission_request(job: TrainingJob, submission: TrainingSubmission, request_id: int, negotiated_gzip: bool=False) -> dict[str, Any]:

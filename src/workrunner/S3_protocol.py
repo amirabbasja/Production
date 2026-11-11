@@ -82,7 +82,7 @@ def _proof_bytes(encoded: str) -> bytes:
 class S3Job:
     job_id: str
     header_bytes: bytes
-    height: int
+    epoch: int
     cert_version: int
     training_threshold: int
     encoded_training_threshold: str | None = None
@@ -91,7 +91,7 @@ class S3Job:
         _text(self.job_id, wire.JOB_ID, 128)
         if not isinstance(self.header_bytes, bytes) or len(self.header_bytes) != 76:
             raise S3ProtocolError('header must contain exactly 76 bytes')
-        _integer(self.height, 'height')
+        _integer(self.epoch, 'training epoch')
         _certificate(self.cert_version)
         _integer(self.training_threshold, wire.TRAINING_THRESHOLD, 1)
         if self.training_threshold >= 1 << 256:
@@ -151,7 +151,7 @@ class S3Dialect:
         version = params.get(wire.FORMAT_FIELD, configured_certificate_version)
         if version is None:
             raise S3ProtocolError(constant_text(_NO_JOB_VERSION))
-        return S3Job(job_id=job_id, header_bytes=bytes.fromhex(encoded_header), height=_integer(params.get('height'), 'height'), cert_version=_certificate(version), training_threshold=training_threshold, encoded_training_threshold=encoded_training_threshold)
+        return S3Job(job_id=job_id, header_bytes=bytes.fromhex(encoded_header), epoch=_integer(params.get('height'), 'training epoch'), cert_version=_certificate(version), training_threshold=training_threshold, encoded_training_threshold=encoded_training_threshold)
 
     def submission_request(self, job: S3Job, plain_proof_b64: str, request_id: int, negotiated_gzip: bool=False) -> dict[str, Any]:
         if not isinstance(job, S3Job):

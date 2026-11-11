@@ -6,6 +6,7 @@ import time
 from urllib.request import Request
 
 from .socks_proxy import current_proxy, http_opener
+from .training_artifacts import artifacts_enabled
 
 
 LOG = logging.getLogger("workrunner")
@@ -15,7 +16,8 @@ _REQUEST_TIMEOUT = 5.0
 class TelegramUpdates:
     def __init__(self, configuration, snapshot):
         settings = configuration.get("telegram", {})
-        self._enabled = settings.get("enabled", False)
+        self._enabled = (artifacts_enabled() and settings.get("enabled", False)
+                         and configuration.get("training", {}).get("generate_artifacts", True))
         self._name = configuration.get("trainer_name", "trainer")
         self._token = settings.get("tgBot_key", "")
         self._training_stats_token = settings.get("training_stats_tgBot_key", "")

@@ -209,31 +209,13 @@ class DatasetSource:
         shard = self._shard_path(shard)
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        url = f"https://huggingface.co/datasets/{quote(self.repo, safe='/')}/resolve/{quote(self.revision, safe='')}/{quote(shard, safe='/')}"
         temporary = None
         try:
-            request = urllib.request.Request(url, headers={'User-Agent': 'WR-side-job/0.1'})
-            with self.opener.open(request, timeout=self.timeout) as response:
-                content_length = response.headers.get('Content-Length')
-                expected = int(content_length) if content_length is not None else self._sizes.get(shard)
-                size = 0
-                with tempfile.NamedTemporaryFile(dir=destination.parent, prefix='.shard-', suffix='.part', delete=False) as stream:
-                    temporary = Path(stream.name)
-                    read = getattr(response, 'read1', response.read)
-                    while True:
-                        if cancelled is not None and cancelled():
-                            raise DatasetCancelled('dataset shard download was cancelled')
-                        chunk = read(1024 * 1024)
-                        if not chunk:
-                            break
-                        stream.write(chunk)
-                        size += len(chunk)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                if expected is not None and size != expected:
-                    raise DatasetError('dataset shard download is incomplete')
-                if shard in self._sizes and size != self._sizes[shard]:
-                    raise DatasetError('dataset shard size does not match its repository listing')
+            with tempfile.NamedTemporaryFile(dir=destination.parent, prefix='.shard-', suffix='.part', delete=False) as stream:
+                temporary = Path(stream.name)
+                self._transfer_shard(shard, stream, cancelled)
+                stream.flush()
+                os.fsync(stream.fileno())
             if cancelled is not None and cancelled():
                 raise DatasetCancelled('dataset shard download was cancelled')
             os.replace(temporary, destination)
@@ -245,6 +227,40 @@ class DatasetSource:
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
+
+    def read_shard(self, shard, *, cancelled=None):
+        shard = self._shard_path(shard)
+        with io.BytesIO() as stream:
+            self._transfer_shard(shard, stream, cancelled)
+            return stream.getvalue()
+
+    def _transfer_shard(self, shard, stream, cancelled):
+        if cancelled is not None and cancelled():
+            raise DatasetCancelled('dataset shard download was cancelled')
+        url = f"https://huggingface.co/datasets/{quote(self.repo, safe='/')}/resolve/{quote(self.revision, safe='')}/{quote(shard, safe='/')}"
+        try:
+            request = urllib.request.Request(url, headers={'User-Agent': 'WR-side-job/0.1'})
+            with self.opener.open(request, timeout=self.timeout) as response:
+                content_length = response.headers.get('Content-Length')
+                expected = int(content_length) if content_length is not None else self._sizes.get(shard)
+                size = 0
+                read = getattr(response, 'read1', response.read)
+                while True:
+                    if cancelled is not None and cancelled():
+                        raise DatasetCancelled('dataset shard download was cancelled')
+                    chunk = read(1024 * 1024)
+                    if not chunk:
+                        break
+                    stream.write(chunk)
+                    size += len(chunk)
+                if expected is not None and size != expected:
+                    raise DatasetError('dataset shard download is incomplete')
+                if shard in self._sizes and size != self._sizes[shard]:
+                    raise DatasetError('dataset shard size does not match its repository listing')
+        except (OSError, ValueError, http.client.HTTPException):
+            raise DatasetError('could not download the selected dataset shard') from None
+        if cancelled is not None and cancelled():
+            raise DatasetCancelled('dataset shard download was cancelled')
 
 def _label(value):
     if type(value) is int and value in (0, 1):
@@ -272,7 +288,7 @@ class ShardDataset(IterableDataset):
 
     def __init__(self, path, *, image_size, seed=42, passes=1, cache_limit_mb=2048):
         super().__init__()
-        self.path = Path(path)
+        self.source = path if isinstance(path, bytes) else Path(path)
         if type(image_size) is not int or image_size < 1:
             raise DatasetError('dataset image_size must be a positive integer')
         if type(passes) is not int or not 1 <= passes <= 100:
@@ -284,29 +300,30 @@ class ShardDataset(IterableDataset):
         self.passes = passes
         self.cache_limit_mb = cache_limit_mb
 
-    def __len__(self):
+    def _open_shard(self):
         try:
+            import pyarrow as pa
             import pyarrow.parquet as parquet
         except ImportError:
             raise DatasetError('job-1 requires pyarrow; install the project requirements') from None
+        source = pa.BufferReader(self.source) if isinstance(self.source, bytes) else self.source
+        return parquet.ParquetFile(source)
+
+    def __len__(self):
         try:
-            with parquet.ParquetFile(self.path) as shard:
+            with self._open_shard() as shard:
                 return shard.metadata.num_rows * self.passes
         except (OSError, ValueError, TypeError):
             raise DatasetError('could not read the selected Parquet training shard') from None
 
     def __iter__(self):
-        try:
-            import pyarrow.parquet as parquet
-        except ImportError:
-            raise DatasetError('job-1 requires pyarrow; install the project requirements') from None
         worker = get_worker_info()
         if self.passes > 1 and worker is not None:
             raise DatasetError('cached dataset passes require a single-process DataLoader')
         rng = random.Random(self.seed)
         cache = [] if self.passes > 1 else None
         try:
-            with parquet.ParquetFile(self.path) as shard:
+            with self._open_shard() as shard:
                 if not {'image_bytes', 'class'}.issubset(shard.schema_arrow.names):
                     raise DatasetError('dataset shard must contain image_bytes and class columns')
                 if cache is not None:

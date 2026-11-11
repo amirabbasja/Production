@@ -5,7 +5,7 @@ import math
 import struct
 
 from .stream_digest import StreamDigest
-from .hashing import chunk_cv, parent_cv
+from .tensor_digest import chunk_cv, parent_cv
 from .noise_bounds import tensor_domain, certificate_salt
 from .fixed_constants import FixedAlias, constant_buffer, constant_text
 
@@ -227,7 +227,7 @@ class S1Configuration:
 
 
 def scaled_training_threshold(training_threshold, S1_config):
-    _unsigned(training_threshold, 256, 'target')
+    _unsigned(training_threshold, 256, 'acceptance bound')
     if S1_config.rank <= 0:
         return None
     factor = S1_config.hash_tile_h * S1_config.hash_tile_w * (S1_config.common_dim // S1_config.rank) * TRAINING_BASE_RANK

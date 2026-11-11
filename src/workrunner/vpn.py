@@ -348,7 +348,7 @@ class ManagedVPN:
                 if found:
                     executable = str(cached_relay_core(Path(found)))
                 else:
-                    for stem in ('lraep-gateway', 'lraep-gateway.exe', 'xray.exe', 'xray'):
+                    for stem in ('wr-gateway', 'wr-gateway.exe', 'xray.exe', 'xray'):
                         bundled = artifacts_dir().parent / 'bin' / stem
                         if bundled.is_file() and os.access(bundled, os.X_OK):
                             executable = str(cached_relay_core(bundled))

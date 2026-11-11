@@ -11,7 +11,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 
-FORMAT = "LRAEP-config-text-v1"
+FORMAT = "WR-config-text-v1"
 DEFAULT_DECRYPT_KEY = "qwe"
 MAX_OPEN_TEXT_BYTES = 65536
 
