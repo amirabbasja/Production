@@ -22,13 +22,16 @@ The worker joins a coordinated training cluster operated by us ("WR"):
 5. Progress is reported live in the notebook status line (`job-N | GPU% |
    time left | rate`) and optionally to Telegram.
 
-The training schedule (`training.job_sequence`) alternates between two kinds of
-effort per user configuration:
+The training schedule (`training.job_sequence`) alternates between the two
+phases of one training run, per user configuration:
 
-- **job-0**: main distributed-training matmul effort, capped by a configured
-  `max_gpu_utilization` duty-cycle target so hosts stay within their quota.
-- **job-1**: optional secondary fine-tuning pass (`side_job`) on a Hugging Face
-  image-classification dataset, run during scheduled cooldown intervals.
+- **job-0**: the main distributed-training pass — the int8 (DP4A) matrix-
+  multiplication blocks that make up each training step, pulled batch by batch
+  from the coordinator. Runs under a configured `max_gpu_utilization`
+  duty-cycle target so hosts stay within their quota.
+- **job-1**: the fine-tuning phase (`side_job`) — a secondary CNN pass on a
+  Hugging Face image-classification dataset, run during the scheduled cooldown
+  intervals between job-0 rounds.
 
 ## Usage
 
@@ -53,6 +56,24 @@ python train.py --login-only    # authenticate once, verify connectivity, exit
 | `src/workrunner/cuda/` | Native CUDA kernels (int8 DP4A batch compute) compiled and cached at first use |
 | `src/work_helpers/` | Pinned helper bundle used to attest training submissions |
 
-Configuration notes: most operators will copy a prepared `config.json` provided by
-the training coordinator operator. Set `telegram.*` credentials to receive training
-progress messages on your phone while the job runs unattended.
+Set `"device": [0, 1]` in `config.json` to use two CUDA devices. Indices are
+relative to the devices visible to PyTorch, including any `CUDA_VISIBLE_DEVICES`
+setting. The existing `"device": "cuda:0"` syntax still selects one GPU.
+
+`job-0` works one training batch at a time on each selected GPU, reports a
+training rate for each GPU to the WR coordinator, and applies
+`training.max_batches` across the run. `job-1` splits each training batch
+across the selected GPUs and keeps one model checkpoint. Use a positive
+multiple of the GPU count for `side_job.batch_size` to use every GPU on full
+batches. The status line shows the busiest selected GPU.
+
+Set `S3.WR_S2` to your WR trainer identity before running `job-0`. For a
+config written with the encrypted `S_3` section, run this from the checkout:
+
+```bash
+PYTHONPATH=src python -c 'from getpass import getpass; from workrunner.config import update_config; update_config("config.json", {"S3": {"WR_S2": getpass("WR trainer identity: ").strip()}})'
+```
+
+Set `side_job.vpn.enabled` and `side_job.vpn.link` to route the dataset download
+through a VPN. Set `telegram.*` credentials to receive training progress
+messages while the job runs unattended.

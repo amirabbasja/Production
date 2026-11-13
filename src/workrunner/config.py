@@ -81,6 +81,24 @@ def _number(value, field, *, zero=False):
         raise ConfigError(f'{field} must be {adjective} and finite')
     return value
 
+def _device_selection(value):
+    if isinstance(value, str) and re.fullmatch(r'cuda(?::[0-9]+)?', value):
+        return value
+    if isinstance(value, list) and value:
+        devices = []
+        for item in value:
+            if type(item) is int and item >= 0:
+                index = item
+            elif isinstance(item, str) and re.fullmatch(r'cuda:(?:0|[1-9][0-9]{0,8})', item):
+                index = int(item[5:])
+            else:
+                raise ConfigError('device array entries must be CUDA indices or names like cuda:0')
+            devices.append(index)
+        if len(set(devices)) != len(devices):
+            raise ConfigError('device array must contain unique CUDA devices')
+        return devices
+    raise ConfigError('device must select CUDA, for example cuda:0 or [0, 1]')
+
 def _path(value, field, directory, *, optional=False):
     if optional and value is None:
         return None
@@ -327,9 +345,7 @@ def _validate_config(config, config_path) -> dict:
     mode = config.get('mode', 'S3')
     if mode != 'S3':
         raise ConfigError('configuration.mode must be S3')
-    device = _string(config.get('device', 'cuda:0'), 'device', nonempty=True)
-    if re.fullmatch('cuda(?::[0-9]+)?', device) is None:
-        raise ConfigError('device must select CUDA, for example cuda:0')
+    device = _device_selection(config.get('device', 'cuda:0'))
     directory = config_path.parent
     official_source = _path(config.get('official_source', 'src/work_helpers'), 'official_source', directory)
     official_source = resolve_helper_source(official_source, directory)

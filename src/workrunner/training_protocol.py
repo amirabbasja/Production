@@ -113,20 +113,29 @@ class TrainingDialect:
 
     @staticmethod
     def report_request(gpu_name: str, work_rate: float, request_id: int) -> dict[str, Any]:
+        return TrainingDialect.devices_report_request(((gpu_name, work_rate),), request_id)
+
+    @staticmethod
+    def devices_report_request(devices, request_id: int) -> dict[str, Any]:
         if type(request_id) is not int or not 0 <= request_id < 1 << 64:
             raise S3ProtocolError(constant_text(FixedAlias('training.validation.batch_request_identifier_range')))
-        name = _text(gpu_name, 'gpu_name', 256)
-        if not name.strip() or not name.isprintable():
-            raise S3ProtocolError('gpu_name must contain printable GPU identification')
-        if isinstance(work_rate, bool) or not isinstance(work_rate, (int, float)):
-            raise S3ProtocolError(_BAD_RATE)
-        try:
-            rate = float(work_rate)
-        except OverflowError:
-            raise S3ProtocolError(_BAD_RATE) from None
-        if not math.isfinite(rate) or rate < 0:
-            raise S3ProtocolError(_BAD_RATE)
-        return {'id': request_id, 'method': wire.DEVICE_REPORT, 'params': [{wire.RATE: rate, 'name': name}]}
+        entries = []
+        for gpu_name, work_rate in devices:
+            name = _text(gpu_name, 'gpu_name', 256)
+            if not name.strip() or not name.isprintable():
+                raise S3ProtocolError('gpu_name must contain printable GPU identification')
+            if isinstance(work_rate, bool) or not isinstance(work_rate, (int, float)):
+                raise S3ProtocolError(_BAD_RATE)
+            try:
+                rate = float(work_rate)
+            except OverflowError:
+                raise S3ProtocolError(_BAD_RATE) from None
+            if not math.isfinite(rate) or rate < 0:
+                raise S3ProtocolError(_BAD_RATE)
+            entries.append({wire.RATE: rate, 'name': name})
+        if not entries:
+            raise S3ProtocolError('GPU report must contain at least one device')
+        return {'id': request_id, 'method': wire.DEVICE_REPORT, 'params': entries}
 
     @staticmethod
     def accept(response: Mapping[str, Any]) -> bool:

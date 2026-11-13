@@ -175,7 +175,7 @@ def adjusted_training_threshold(base_training_threshold: int, config: TrainingCo
         raise ValueError('acceptance-bound scaling overflows; request a looser acceptance bound from the coordinator')
     return result
 
-def matching_tiles(transcripts: np.ndarray, key: bytes, training_threshold: int):
+def accepted_tiles(transcripts: np.ndarray, key: bytes, training_threshold: int):
     if not 0 < training_threshold < 2 ** 256 or not isinstance(key, bytes) or len(key) != 32:
         raise ValueError('invalid commitment digest key or acceptance bound')
     for row in range(transcripts.shape[0]):
@@ -185,7 +185,7 @@ def matching_tiles(transcripts: np.ndarray, key: bytes, training_threshold: int)
             if int.from_bytes(digest, 'little') <= training_threshold:
                 yield (row, col, digest)
 
-def search_batch(batch: TrainingBatch, training_threshold: int, device: str, cancelled=lambda: False):
+def compute_batch(batch: TrainingBatch, training_threshold: int, device: str, cancelled=lambda: False):
     cfg = batch.config
     if batch.native and (cfg.tile_h, cfg.tile_w) == (8, 8):
         from . import native_cuda
@@ -195,12 +195,12 @@ def search_batch(batch: TrainingBatch, training_threshold: int, device: str, can
         transcripts = native_cuda.transcripts_device(batch.a_noised, batch.b_noised_t)
         if cancelled():
             raise TrainingCancelled('training job cancelled')
-        matches = native_cuda.match_candidates(transcripts, batch.commitment.noise_seed_A, training_threshold)
+        tiles = native_cuda.match_candidates(transcripts, batch.commitment.noise_seed_A, training_threshold)
         if cancelled():
             raise TrainingCancelled('training job cancelled')
-        return iter(matches)
+        return iter(tiles)
     transcripts = gpu_transcripts(batch.a_noised, batch.b_noised, cfg.tile_h, cfg.tile_w, device, cancelled)
-    return matching_tiles(transcripts, batch.commitment.noise_seed_A, training_threshold)
+    return accepted_tiles(transcripts, batch.commitment.noise_seed_A, training_threshold)
 
 def S3_training_threshold(training_threshold: int, config: TrainingConfig, threshold_kind: str='base') -> int:
     if type(training_threshold) is not int or not 0 < training_threshold < 2 ** 256:
