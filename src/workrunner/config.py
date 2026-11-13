@@ -367,8 +367,10 @@ def _validate_config(config, config_path) -> dict:
         )
     except ValueError as exc:
         raise ConfigError(str(exc)) from None
-    for field in ('m', 'n'):
-        _integer(training[field], f'training.{field}', 128, 4096)
+    shape = tuple(training[field] for field in ('m', 'n', 'k', 'tile_h', 'tile_w'))
+    _integer(training['m'], 'training.m', 128, 4096)
+    max_n = wire.WR_CAPTURED_SHAPE[1] if shape == wire.WR_CAPTURED_SHAPE else 4096
+    _integer(training['n'], 'training.n', 128, max_n)
     _integer(training['k'], 'training.k', 2048, 65536)
     if training['k'] % 128:
         raise ConfigError('training.k must be a multiple of 128')

@@ -23,6 +23,7 @@ _BATCH_TRAINING_THRESHOLD = FixedAlias('training.label.batch_acceptance_bound')
 _MISSING_RESULT = FixedAlias('training.validation.batch_and_compact_attestation_required')
 _BAD_COMPRESSION = FixedAlias('training.validation.batch_submission_compression_unsupported')
 _SEED_MISMATCH = 'S7 submission device seed does not match its job'
+SHAPE_REJECTED = 'shape not allowed'
 
 _HEADER_MASK = FixedAlias('training.format.batch_header_mask')
 
@@ -155,8 +156,9 @@ class TrainingDialect:
         if type(request_id) is not int or not -1 <= request_id < 1 << 64 or type(status) is not int or (status not in (0, 1)):
             raise S3ProtocolError(constant_text(FixedAlias('training.validation.batch_response_envelope_unknown')))
         result = response.get('result')
-        if request_id >= 0 and type(result) is bool:
-            return 'reply'
+        if request_id >= 0:
+            if type(result) is bool or (status == 0 and isinstance(result, str) and result):
+                return 'reply'
         if request_id != -1 or status != 1 or response.get('error') is not None or (not isinstance(result, list)) or (not result):
             raise S3ProtocolError(constant_text(FixedAlias('training.validation.batch_server_message_shape_unknown')))
         if wire.text_matches('SERVER_SEED', result[0]):

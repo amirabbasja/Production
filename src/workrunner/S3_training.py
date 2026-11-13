@@ -141,7 +141,7 @@ def _release_work(devices):
                 torch.cuda.empty_cache()
 
 
-def _compute_device_batch(device, pacer, utilization, stopped, deadline, prepare, threshold, cancelled):
+def _compute_device_batch(device, pacer, utilization, stopped, deadline, prepare, threshold, cancelled, compute):
     pacer.set_utilization(utilization)
     pacer.wait(stopped, deadline=deadline)
     if cancelled():
@@ -153,7 +153,7 @@ def _compute_device_batch(device, pacer, utilization, stopped, deadline, prepare
             batch = prepare()
             if cancelled():
                 return None
-            tiles = compute_batch(batch, threshold, device, cancelled)
+            tiles = compute(batch, threshold, device, cancelled)
         completed = True
         return batch, tiles
     except TrainingCancelled:
@@ -163,7 +163,7 @@ def _compute_device_batch(device, pacer, utilization, stopped, deadline, prepare
 
 
 def _run_S3_training(configuration, *, login_only, login_config, stopped, effort, started):
-    from .config import resolve_S3_settings
+    from .config import ConfigError, resolve_S3_settings
     from .S3_client import S3AuthenticationError, S3CompatibilityError, S3Session, ReplacedS3Job
     from .S3_transport import S3ConnectionError
     S3 = resolve_S3_settings(configuration[constant_text(FixedAlias('training.config.coordinator_section'))])
@@ -175,10 +175,21 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
         raise ValueError('A separate login config requires WR')
     session_class = S3Session
     session_options = {}
+    settings = configuration['training']
+    shape = tuple(settings[field] for field in ('m', 'n', 'k', 'tile_h', 'tile_w'))
+    captured_shape = selected_protocol == 'WR' and shape == wire.WR_CAPTURED_SHAPE
+    config_class = TrainingConfig
+    compute = compute_batch
     if selected_protocol == 'WR':
         from .S3_diagnostics import UnknownRequestRecorder
         from .training_client import TrainingSession
-        from .training_work import prepare_training_batch, verified_training_submission
+        from .training_protocol import SHAPE_REJECTED
+        from .training_work import (
+            CapturedTrainingConfig, compute_captured_batch, prepare_training_batch, verified_training_submission,
+        )
+        if captured_shape:
+            config_class = CapturedTrainingConfig
+            compute = compute_captured_batch
         session_class = TrainingSession
         if artifacts_enabled():
             diagnostic_dir = S3.get('unknown_request_dir') or Path(configuration['training']['output_dir']) / constant_text(FixedAlias('training.path.unrecognized_batch_messages'))
@@ -188,8 +199,7 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
     if login_config is None:
         validate_S3_identity(S3, selected_protocol)
     from workrunner import protocol_types as pm
-    settings = configuration['training']
-    cfg = TrainingConfig(settings['m'], settings['n'], settings['k'], settings['tile_h'], settings['tile_w'])
+    cfg = config_class(*shape)
     devices = ()
     if not login_only:
         devices = resolve_cuda_devices(configuration['device'], unavailable=constant_text(
@@ -212,7 +222,9 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
         monitors = [resources.enter_context(GpuUtilization(str(device))) for device in devices]
         workers = []
         for device, monitor in zip(devices, monitors):
-            native = (cfg.tile_h, cfg.tile_w) == (8, 8) and native_cuda.available(device)
+            native = (captured_shape or (cfg.tile_h, cfg.tile_w) == (8, 8)) and native_cuda.available(device)
+            if captured_shape and not native:
+                raise ConfigError('The configured S7 shape requires native CUDA kernels')
             name = torch.cuda.get_device_name(device)
             LOG.debug('GPU %s (%s): %s', device, name, 'native CUDA DP4A' if native else 'PyTorch reference')
             pacer = GpuPacer(device, 100)
@@ -359,7 +371,7 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
                                                          gpu_signals=True, native=native)
 
                                 return _compute_device_batch(device, worker.pacer, utilization, stopped,
-                                                              rest_deadline, prepare, training_threshold, cancelled)
+                                                              rest_deadline, prepare, training_threshold, cancelled, compute)
 
                             active_workers = workers[:max_batches - stats.batches] if max_batches else workers
                             if executor is None:
@@ -413,6 +425,11 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
                                         log(logging.INFO, constant_text(_LOG_RESULT_OK), job.job_id)
                                     else:
                                         stats.declined += 1
+                                        if selected_protocol == 'WR' and result.error == SHAPE_REJECTED:
+                                            raise ConfigError(
+                                                f'S7 coordinator rejected training shape {shape}: {SHAPE_REJECTED}. '
+                                                'Check training.m, training.n, training.k, training.tile_h, and training.tile_w.'
+                                            )
                                         log(logging.WARNING, constant_text(_LOG_RESULT_FAILED), job.job_id, result.error)
                             update_progress()
                         finally:

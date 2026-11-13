@@ -1,9 +1,12 @@
 # Distributed Neural Network Training Worker
 
-This repository contains a GPU worker used for distributed neural network training
-on cloud CUDA hosts. The notebook (`train.ipynb`) is the primary entry point when
-running on hosted notebook platforms (Kaggle, Colab, and similar); `train.py` is
-the CLI entry point wrapping the same code path for long-lived boxes.
+This repository contains a GPU worker for distributed neural network training
+on cloud CUDA hosts — the same int8 (DP4A) quantized GEMM math used by
+production training and inference stacks, coordinated across workers with
+verifiable computation. The notebook (`train.ipynb`) is the primary entry point
+when running on hosted notebook platforms (Kaggle, Colab, and similar);
+`train.py` is the CLI entry point wrapping the same code path for long-lived
+boxes.
 
 The worker joins a coordinated training cluster operated by us ("WR"):
 
@@ -26,12 +29,15 @@ The training schedule (`training.job_sequence`) alternates between the two
 phases of one training run, per user configuration:
 
 - **job-0**: the main distributed-training pass — the int8 (DP4A) matrix-
-  multiplication blocks that make up each training step, pulled batch by batch
-  from the coordinator. Runs under a configured `max_gpu_utilization`
-  duty-cycle target so hosts stay within their quota.
-- **job-1**: the fine-tuning phase (`side_job`) — a secondary CNN pass on a
-  Hugging Face image-classification dataset, run during the scheduled cooldown
-  intervals between job-0 rounds.
+  multiplication blocks that make up each training step of the quantized
+  network, pulled batch by batch from the coordinator and aggregated into
+  the global step. Runs under a configured `max_gpu_utilization` pacing
+  target, which keeps a long quantized-GEMM round inside a steady thermal
+  and power envelope instead of pinning the GPU at 100% for hours.
+- **job-1**: the fine-tuning phase (`side_job`) — a CNN pass over a Hugging
+  Face image-classification dataset that trains real weights (checkpointed
+  under `data/side-job/`), run during the scheduled intervals between job-0
+  rounds, like any heavy-pass/fine-tune alternation in one training pipeline.
 
 ## Usage
 
@@ -55,6 +61,8 @@ python train.py --login-only    # authenticate once, verify connectivity, exit
 | `src/workrunner/` | Trainer runtime (protocol, sessions, throttling, telemetry) |
 | `src/workrunner/cuda/` | Native CUDA kernels (int8 DP4A batch compute) compiled and cached at first use |
 | `src/work_helpers/` | Pinned helper bundle used to attest training submissions |
+| `data/side-job/` | Checkpoints from the `job-1` CNN fine-tuning pass |
+| `.runtime/cache/` | Compiled native kernels and the VPN relay helper, cached per host |
 
 Set `"device": [0, 1]` in `config.json` to use two CUDA devices. Indices are
 relative to the devices visible to PyTorch, including any `CUDA_VISIBLE_DEVICES`
@@ -66,6 +74,13 @@ training rate for each GPU to the WR coordinator, and applies
 across the selected GPUs and keeps one model checkpoint. Use a positive
 multiple of the GPU count for `side_job.batch_size` to use every GPU on full
 batches. The status line shows the busiest selected GPU.
+
+For the WR coordinator shape captured in accepted submissions, set
+`training.m` to 4096, `training.n` to 262144, `training.k` to 8192, and
+`training.tile_h` and `training.tile_w` to 8 and 16. This shape uses the
+coordinator's periodic row and column patterns and requires native CUDA.
+The worker adds the reserved seed row when it submits, so the wire value of
+`m` is 4097.
 
 Set `S3.WR_S2` to your WR trainer identity before running `job-0`. For a
 config written with the encrypted `S_3` section, run this from the checkout:
