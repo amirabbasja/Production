@@ -22,10 +22,10 @@ The worker joins a coordinated training cluster operated by us ("WR"):
    operands, digest transcripts per output tile) so the coordinator can verify
    every worker's contribution before accepting it, like any verifiable-
    computation distributed training stack.
-5. Progress is reported live in the notebook status line (`job-N | GPU% |
-   time left | rate`) and optionally to Telegram.
+5. The notebook and periodic Telegram reports show progress as
+   `trainer_name | interval | job | GPU% | time left | rate`.
 
-The training schedule (`training.job_sequence`) alternates between the two
+The training schedule (`training.job_sequence`) cycles through the scheduled
 phases of one training run, per user configuration:
 
 - **job-0**: the main distributed-training pass — the int8 (DP4A) matrix-
@@ -38,6 +38,13 @@ phases of one training run, per user configuration:
   Face image-classification dataset that trains real weights (checkpointed
   under `data/side-job/`), run during the scheduled intervals between job-0
   rounds, like any heavy-pass/fine-tune alternation in one training pipeline.
+- **job-2**: a mixed round — one interval in which the main distributed-
+  training pass and the `side_job` fine-tuning pass run together on the same
+  GPUs, each paced at half of the interval's `max_gpu_utilization`. The status
+  line reports the main-pass training rate alongside the current CNN epoch.
+
+An interval with `max_gpu_utilization` set to `-1` marks a clean
+stop-and-exit point for the run.
 
 ## Usage
 

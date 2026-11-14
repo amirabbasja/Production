@@ -139,6 +139,7 @@ def run(root=None, *, login_only=False):
 
     root = Path(root or Path(__file__).parent).resolve()
     sys.path.insert(0, str(root / 'src'))
+    notebook = False
     with ExitStack() as runtime:
         try:
             config_path = root / 'config.json'
@@ -150,8 +151,10 @@ def run(root=None, *, login_only=False):
                 set_checkout_directories(root)
                 from workrunner.config import resolve_S3_settings
                 from workrunner.login_config import load_training_config
+                from workrunner.progress import in_notebook
                 from workrunner.training_artifacts import training_output
 
+                notebook = in_notebook()
                 config = load_training_config(config_path)
             finally:
                 sys.dont_write_bytecode = bytecode
@@ -174,9 +177,13 @@ def run(root=None, *, login_only=False):
             with ManagedVPN(config['vpn']) as proxy, routed(proxy):
                 return run_S3_training(config, login_only=login_only, login_config=config_path)
         except KeyboardInterrupt:
+            if notebook:
+                runtime.close()
             print('Stopped', flush=True)
             return 130
         except (ValueError, RuntimeError, ImportError, OSError) as error:
+            if notebook:
+                runtime.close()
             print(f'Training failed ({type(error).__name__}): {error}', flush=True)
             return 1
 
