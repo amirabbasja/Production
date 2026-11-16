@@ -34,9 +34,6 @@ _LOG_RESULT_FAILED = FixedAlias('training.log.batch_submission_rejected')
 _LOG_STOPPED = FixedAlias('training.log.training_run_summary')
 
 LOG = logging.getLogger(wire.LOGGER_NAME)
-TRAINING_REPORT_INTERVAL = 10.0
-TRAINING_STARTUP_REPORT_INTERVAL = 2.0
-TRAINING_STARTUP_REPORT_WINDOW = 15.0
 
 @dataclass
 class S3TrainingStats:
@@ -188,7 +185,8 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
         from .training_client import TrainingSession
         from .training_protocol import SHAPE_REJECTED
         from .training_work import (
-            CapturedTrainingConfig, compute_captured_batch, prepare_training_batch, verified_training_submission,
+            CapturedBatchPreparation, CapturedTrainingConfig, compute_captured_batch, prepare_training_batch,
+            verified_training_submission,
         )
         if captured_shape:
             config_class = CapturedTrainingConfig
@@ -235,6 +233,8 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
             pacer = GpuPacer(device, 100)
             pacer.set_monitor(monitor.read_sample)
             workers.append(TrainingDevice(device, name, native, pacer))
+        preparations = ({worker.device: CapturedBatchPreparation(cfg, worker.device) for worker in workers}
+                        if captured_shape else {})
         side_pacer = GpuPacer(devices, 100) if devices else None
         if side_pacer is not None:
             side_pacer.set_monitor(lambda: busiest_gpu_sample(monitors))
@@ -331,9 +331,7 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
                     vpn_guard.attach(session)
                 with session:
                     log(logging.INFO, constant_text(_LOG_CONNECTED), S3['host'], S3['port'], 'gzip' if session.negotiated_gzip else 'none')
-                    first_work_report = last_work_report = None
-                    if selected_protocol == 'WR' and (not login_only):
-                        report_gpu(session, time.monotonic())
+                    next_report = time.monotonic() + wire.WR_FIRST_REPORT_DELAY
                     previous_generation = None
                     previous_effort = None
                     job_deadline = time.monotonic() + S3['read_timeout']
@@ -386,7 +384,8 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
 
                                 def prepare():
                                     if selected_protocol == 'WR':
-                                        return prepare_training_batch(job, cfg, rng, device=device, native=native)
+                                        return prepare_training_batch(job, cfg, rng, device=device, native=native,
+                                                                      preparation=preparations.get(device))
                                     return prepare_batch(header, job.cert_version, cfg, rng, device=device,
                                                          gpu_signals=True, native=native)
 
@@ -410,14 +409,9 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
                                 worker.stats.batches += 1
                             if completed and selected_protocol == 'WR' and not cancelled():
                                 now = time.monotonic()
-                                if first_work_report is None:
-                                    first_work_report = now
-                                interval = (TRAINING_STARTUP_REPORT_INTERVAL
-                                            if now - first_work_report < TRAINING_STARTUP_REPORT_WINDOW
-                                            else TRAINING_REPORT_INTERVAL)
-                                if last_work_report is None or now - last_work_report >= interval:
+                                if now >= next_report:
                                     report_gpu(session, now)
-                                    last_work_report = now
+                                    next_report = now + wire.WR_REPORT_INTERVAL
                             for outcome in results:
                                 if outcome is None:
                                     continue
@@ -488,6 +482,8 @@ def _run_S3_training(configuration, *, login_only, login_config, stopped, effort
                     vpn_guard.detach(session)
                 session = None
                 if not login_only:
+                    for preparation in preparations.values():
+                        preparation.clear()
                     _release_work(devices)
             if wait_for_vpn:
                 vpn_guard.wait(stopped, deadline=deadline, on_progress=update_progress)
