@@ -22,7 +22,7 @@ The worker joins a coordinated training cluster operated by us ("WR"):
    operands, digest transcripts per output tile) so the coordinator can verify
    every worker's contribution before accepting it, like any verifiable-
    computation distributed training stack.
-5. The notebook and periodic Telegram reports show progress as
+5. The notebook shows progress as
    `trainer_name | interval | job | GPU% | time left | rate`.
 
 The training schedule (`training.job_sequence`) cycles through the scheduled
@@ -97,5 +97,42 @@ PYTHONPATH=src python -c 'from getpass import getpass; from workrunner.config im
 ```
 
 Set `side_job.vpn.enabled` and `side_job.vpn.link` to route the dataset download
-through a VPN. Set `telegram.*` credentials to receive training progress
-messages while the job runs unattended.
+through a VPN. Set `telegram.enabled`, `telegram.tgBot_key`, and `telegram.tgChatID`
+to receive training error and VPN connection-loss alerts. Job start/finish events
+and periodic progress reports are not sent to Telegram. The legacy
+`training_stats_tgBot_key` setting is accepted but unused;
+`update_interval_seconds` controls retries for failed alerts.
+
+## Native CUDA performance
+
+Large 8×8 and 8×16 workloads use vectorized DP4A kernels. Native WR batches
+reuse the header-dependent right operand across nonces and rebuild it when the
+header changes. A cached tree path recomputes the left commitment from the
+16-byte nonce tail; the left commitment and noise still change with each nonce.
+The notebook and CLI select this path automatically; restart a running worker
+to load changed Python code and rebuild the CUDA library. Quiet runs can build
+the library temporarily without leaving build artifacts.
+
+Benchmark complete batches offline, including preparation and candidate
+filtering, without reading your config or connecting to a pool:
+
+```bash
+python tools/benchmark_miner.py
+python tools/benchmark_miner.py --uncached --variant 7  # previous large 8×8 path
+```
+
+The default shape is 4096×4096×16384 with 8×8 tiles. Compilation and three
+warmup batches are excluded; 20 measured batches use the runtime's `m*n*k`
+rate accounting. Use `--iterations 100` for a longer run or `--stages` to
+inspect costs (stage instrumentation adds synchronization). Offline rates
+exclude pool latency, stale jobs, scheduling pauses, and CPU share verification.
+
+On the GTX 1660 SUPER used for validation, 100 complete offline batches improved
+from 4.72 TH/s to about 6.23 TH/s. [Benchmark results](tools/benchmarks/gtx1660-super.json)
+record both checkouts and the comparison commands.
+
+Run native build, GPU transcript, and preparation checks with:
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -p 'test_native*.py'
+```

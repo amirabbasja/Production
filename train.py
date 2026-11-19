@@ -139,13 +139,16 @@ def run(root=None, *, login_only=False):
 
     root = Path(root or Path(__file__).parent).resolve()
     sys.path.insert(0, str(root / 'src'))
+    report_training_error = None
+    config = None
+    config_path = root / 'config.json'
     notebook = False
     with ExitStack() as runtime:
         try:
-            config_path = root / 'config.json'
             bytecode = sys.dont_write_bytecode
             sys.dont_write_bytecode = True
             try:
+                from workrunner.telegram import report_training_error
                 from workrunner.paths import set_checkout_directories
 
                 set_checkout_directories(root)
@@ -181,7 +184,9 @@ def run(root=None, *, login_only=False):
                 runtime.close()
             print('Stopped', flush=True)
             return 130
-        except (ValueError, RuntimeError, ImportError, OSError) as error:
+        except Exception as error:
+            if report_training_error is not None:
+                report_training_error(config, error, config_path=config_path)
             if notebook:
                 runtime.close()
             print(f'Training failed ({type(error).__name__}): {error}', flush=True)
