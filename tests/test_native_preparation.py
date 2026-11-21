@@ -60,7 +60,7 @@ class PreparationCacheTests(unittest.TestCase):
         return prepare_training_batch(job, self.cfg, self.rng, device='cpu', native=True,
                                       preparation=self.preparation)
 
-    def test_new_nonce_reuses_only_the_right_operand(self):
+    def test_new_batch_seed_reuses_only_the_right_operand(self):
         job = make_job()
         first, second = self.prepare(job), self.prepare(job)
         self.assertIs(first.b_noised_t, second.b_noised_t)

@@ -1,23 +1,13 @@
 import ctypes
-from contextlib import ExitStack, contextmanager, nullcontext
-import hashlib
+from contextlib import contextmanager
+import json
 import logging
-import os
-from pathlib import Path
-import shutil
-import subprocess
-import tempfile
 import threading
 import numpy as np
 import torch
-from .paths import cache_dir
+from .native_text_codec import library_path
 from .training_artifacts import artifacts_enabled
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
 LOG = logging.getLogger('workrunner')
-SOURCE = Path(__file__).with_name('cuda')
 _LIBRARIES = {}
 _LOCK = threading.Lock()
 _UNAVAILABLE = {}
@@ -41,66 +31,26 @@ def _configure(lib):
     return lib
 
 def load_native(device='cuda:0'):
-    if fcntl is None:
-        raise NativeUnavailable('native CUDA builds currently require Linux; the reference path remains available')
     if not torch.cuda.is_available():
         raise NativeUnavailable('CUDA is unavailable')
     destination = torch.device(device)
     if destination.type != 'cuda':
         raise NativeUnavailable('native kernels require CUDA')
     capability = torch.cuda.get_device_capability(destination)
-    if capability < (6, 1):
-        raise NativeUnavailable('native packed integer kernels require compute capability 6.1+')
     architecture = f'{capability[0]}{capability[1]}'
-    with _LOCK, ExitStack() as resources:
+    with _LOCK:
         if architecture in _LIBRARIES:
             return _LIBRARIES[architecture]
-        compiler = shutil.which('nvcc')
-        if not compiler:
-            raise NativeUnavailable('nvcc is unavailable; install a compatible CUDA toolkit')
-        names = ('transcripts.cu', 'candidate_filter.cu', 'preparation.cu', 'tree.cu', 'runtime.cu', 'digest_core.cuh')
-        paths = [SOURCE / name for name in names]
-        if any((not path.is_file() for path in paths)):
-            raise NativeUnavailable('native CUDA source files are incomplete')
-        fingerprint = hashlib.sha256(architecture.encode() + os.fsencode(compiler))
-        for path in paths:
-            fingerprint.update(path.read_bytes())
-        cache = cache_dir() / 'native'
-        library = cache / f'WR-sm{architecture}-{fingerprint.hexdigest()[:16]}.so'
-        persist_build = artifacts_enabled()
-        if not persist_build and not library.exists():
-            # Quiet runs still need native compute on a fresh checkout. Load the
-            # library before removing its temporary build directory; Linux keeps
-            # the loaded shared object mapped for the rest of this process.
-            cache = Path(resources.enter_context(tempfile.TemporaryDirectory(prefix='wr-native-')))
-            library = cache / library.name
-        if persist_build:
-            cache.mkdir(parents=True, exist_ok=True)
-        build_lock = (cache / 'build.lock').open('w') if persist_build else nullcontext()
-        with build_lock as lock:
-            if lock is not None:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            if not library.exists():
-                LOG.info('Building native CUDA kernels for sm_%s', architecture)
-                temporary = library.with_suffix(f'.{os.getpid()}.tmp.so')
-                command = [compiler, '-O3', '-std=c++17', '--shared', '-Xcompiler=-fPIC', f'-gencode=arch=compute_{architecture},code=sm_{architecture}', '-I', str(SOURCE), *[str(p) for p in paths if p.suffix == '.cu'], '-o', str(temporary)]
-                try:
-                    result = subprocess.run(command, capture_output=True, text=True, timeout=180)
-                except (OSError, subprocess.SubprocessError) as exc:
-                    temporary.unlink(missing_ok=True)
-                    raise NativeUnavailable(f'native CUDA build failed: {exc}') from exc
-                if persist_build:
-                    (cache / 'build.log').write_text(result.stdout + result.stderr)
-                if result.returncode:
-                    temporary.unlink(missing_ok=True)
-                    detail = (f"see {cache / 'build.log'}" if persist_build else
-                              (result.stderr or result.stdout).strip()[-4000:])
-                    raise NativeUnavailable(f'native CUDA build failed: {detail}')
-                temporary.replace(library)
         try:
-            lib = _configure(ctypes.CDLL(str(library)))
-        except (OSError, AttributeError) as exc:
-            raise NativeUnavailable(f'cannot load native CUDA library: {exc}') from exc
+            folder = library_path().parent
+            manifest = json.loads((folder / 'compute_manifest.json').read_text())
+            if architecture not in manifest['cuda_architectures']:
+                raise NativeUnavailable(f'no bundled CUDA kernels for sm_{architecture}; rebuild in WR-trainer')
+            lib = _configure(ctypes.CDLL(str(folder / 'libnative_cuda.so')))
+        except (OSError, ValueError, KeyError, AttributeError, RuntimeError) as exc:
+            if isinstance(exc, NativeUnavailable):
+                raise
+            raise NativeUnavailable(f'cannot load bundled native CUDA library: {exc}') from exc
         _LIBRARIES[architecture] = lib
         return lib
 

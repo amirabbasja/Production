@@ -1,8 +1,8 @@
+"""Native-owned message buffers; Python receives translated JSON only.
 
-
-
-
-
+The socket/TLS and HTTP libraries may have their own internal copies. Explicit
+``loads`` also cannot wipe its caller-owned input. Live channels use recv_into.
+"""
 
 from contextlib import contextmanager
 import ctypes
@@ -15,11 +15,11 @@ from .native_text_codec import library_path
 
 
 class WireError(ValueError):
-    pass
+    """Invalid wire data, without including the original message in the error."""
 
 
 class WireLimitError(WireError):
-    pass
+    """A configured native message limit was exceeded."""
 
 
 _PROFILES = {'rpc': 0, 's3': 1, 'wr': 2}
@@ -101,7 +101,7 @@ class _Lease:
 
 
 class _Buffer:
-
+    """Own a native allocation. No plaintext is copied during reserve or views."""
 
     def __init__(self):
         self.library = _library()
@@ -151,8 +151,8 @@ class _Buffer:
         count = self.size if size is None else size
         self.reserve(count)
         array = (ctypes.c_ubyte * count).from_address(self.pointer) if count else (ctypes.c_ubyte * 0)()
-
-
+        # Derived memoryviews retain this ctypes array and its allocation lease.
+        # Context exit wipes the allocation, but never frees a dangling view.
         array._native_lease = _Lease(self._allocation)
         value = memoryview(array).cast('B')
         try:
@@ -173,8 +173,8 @@ class _Buffer:
 
 @contextmanager
 def _input(data):
-
-
+    # Explicit compatibility input remains owned by its caller. Live receive
+    # paths instead hand a native pointer directly to _transform.
     encoded = None
     view = array = None
     try:
@@ -210,8 +210,8 @@ def _transform(pointer, count, profile, outgoing=False, framed=False, seed=None)
 
 
 def _neutral_object(buffer):
-
-
+    # This copy contains translated field/method names. The native original
+    # and decoded scratch allocations are already wiped when parsing returns.
     neutral = ctypes.string_at(buffer.pointer, buffer.size)
     try:
         return json.loads(neutral)
@@ -222,7 +222,7 @@ def _neutral_object(buffer):
 
 
 def loads(data, profile='rpc'):
-
+    """Translate caller-owned JSON; this API does not erase the input object."""
     result = None
     try:
         with _input(data) as (pointer, count):
@@ -236,7 +236,7 @@ def loads(data, profile='rpc'):
 
 @contextmanager
 def dumps_buffer(message, profile='rpc', *, framed=False, seed=None, newline=False):
-
+    """Serialize neutral data into scoped native wire memory, wiped on exit."""
     result = encoded = None
     try:
         encoded = json.dumps(message, ensure_ascii=True, separators=(',', ':'), allow_nan=False).encode('ascii')
@@ -253,7 +253,7 @@ def dumps_buffer(message, profile='rpc', *, framed=False, seed=None, newline=Fal
 
 
 def read_json_body(response, limit, profile='rpc'):
-
+    """Read HTTP body directly into native buffers and return neutral data."""
     if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
         raise ValueError('body limit must be a positive integer')
     raw, chunk, translated = _Buffer(), _Buffer(), None
@@ -283,13 +283,13 @@ def read_json_body(response, limit, profile='rpc'):
 
 
 class NativeChannel:
+    """One JSON-line connection with independent reader and writer locks.
 
-
-
-
-
-
-
+    Closing defers native frees until in-flight socket callbacks return. The
+    transport owner shuts down its socket to interrupt a blocked recv_into.
+    WR diagnostics can explicitly request the encoded last_frame, then discard
+    it. Raw decoded JSON is never exported for diagnostics.
+    """
 
     def __init__(self, connection, profile, max_frame=MAX_FRAME):
         _profile(profile)
@@ -357,7 +357,7 @@ class NativeChannel:
                         if boundary > self.max_frame:
                             raise WireLimitError('wire frame exceeds the configured size limit')
                         if self.profile == 's3':
-
+                            # Empty JSON lines are allowed without copying their contents.
                             with self._raw.view(boundary) as view:
                                 blank = all(value in (9, 10, 13, 32) for value in view)
                             if blank:

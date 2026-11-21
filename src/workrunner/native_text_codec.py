@@ -1,4 +1,4 @@
-
+"""Native exact-word transformations and scoped mutable output buffers."""
 
 from contextlib import contextmanager
 import ctypes
@@ -81,7 +81,7 @@ def word_buffer(word: str, method: str = 'decode'):
 
 
 def transform_word(word: str, method: str = 'decode') -> str:
-
+    """Transform an exact table entry; return unknown input unchanged in value."""
     with word_buffer(word, method) as value:
         return value.decode('utf-8', errors='surrogatepass')
 
@@ -95,7 +95,7 @@ def encode_word(word: str) -> str:
 
 
 def word_matches(placeholder: str, value: object) -> bool:
-
+    """Compare an ASCII protocol value using a cleared mutable native output."""
     if not isinstance(value, str):
         return False
     with word_buffer(placeholder) as expected:
@@ -105,14 +105,14 @@ def word_matches(placeholder: str, value: object) -> bool:
 
 
 class FixedAlias(bytes):
-
+    """A named constant, distinct from a caller's original bytes."""
 
     def __new__(cls, name: str):
         return super().__new__(cls, name, 'ascii')
 
 
 def encode_fixed(original: bytes) -> FixedAlias:
-
+    """Find the alias for an exact text or binary constant."""
     if not isinstance(original, bytes):
         raise TypeError('fixed constant must be bytes')
     with _output_buffer(original, 3) as alias:
@@ -121,7 +121,7 @@ def encode_fixed(original: bytes) -> FixedAlias:
 
 @contextmanager
 def fixed_buffer(original: bytes):
-
+    """Yield a mutable constant buffer and clear it on exit."""
     if not isinstance(original, bytes):
         raise TypeError('fixed constant must be bytes')
     if isinstance(original, FixedAlias):

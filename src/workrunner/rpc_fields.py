@@ -1,4 +1,4 @@
-
+"""Per-message field translation without decoded aliases in model schemas."""
 
 from collections.abc import Mapping
 from contextvars import ContextVar
@@ -15,7 +15,7 @@ _name_policy = ContextVar('rpc_field_name_policy', default=(None, None))
 _extra_policy = ContextVar('rpc_field_extra_policy', default=None)
 _native_direction = ContextVar('rpc_native_field_direction', default=None)
 
-
+# Standalone models use training names for these native fields.
 _NATIVE_FIELDS = {
     'training_credit': 'reward_amount',
     'training_metadata': 'reward_metadata',
@@ -86,11 +86,11 @@ class WireModel(BaseModel):
 
     @classmethod
     def model_validate_json(cls, json_data: str | bytes | bytearray, **options):
+        """Use native translation for the usual alias/name policy.
 
-
-
-
-
+        Explicit Pydantic name policies and strict JSON semantics remain a
+        compatibility API; those callers own any original input strings.
+        """
         try:
             explicit_policy = any(options.get(name) is not None for name in ('by_alias', 'by_name'))
             usual_policy = (cls.model_config.get('validate_by_alias', True)
@@ -108,12 +108,12 @@ class WireModel(BaseModel):
 
     @classmethod
     def model_validate_wire(cls, source, *, limit=16 * 1024 * 1024, **options):
+        """Read native JSON buffers and validate neutral Python fields.
 
-
-
-
-
-
+        The byte limit applies to streams and raw inputs. A stream must
+        implement readinto(). A caller-supplied str/bytes input
+        remains caller-owned; use a stream to avoid that original Python copy.
+        """
         neutral = None
         try:
             if 'by_alias' in options or 'by_name' in options:
@@ -125,8 +125,8 @@ class WireModel(BaseModel):
                     neutral = read_json_body(source, limit, profile='rpc')
                 else:
                     if isinstance(source, str):
-
-
+                        # Count UTF-8 bytes without creating another immutable
+                        # copy of the caller's original JSON. ASCII is usual.
                         count = len(source)
                         if count <= limit and not source.isascii():
                             count = sum(1 + (ord(c) > 0x7f) + (ord(c) > 0x7ff)
@@ -154,11 +154,11 @@ class WireModel(BaseModel):
 
     @contextmanager
     def wire_buffer(self, **options):
+        """Serialize to a scoped native wire buffer, wiped after use.
 
-
-
-
-
+        model_dump()/model_dump_json() remain compatibility APIs whose returned
+        decoded names belong to the caller. Use this API for network writes.
+        """
         neutral = None
         try:
             if options.get('by_alias'):

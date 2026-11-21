@@ -1,12 +1,12 @@
-"""Benchmark the native miner offline with synthetic inputs and no pool traffic.
+"""Benchmark the native worker offline with synthetic inputs and no coordinator traffic.
 
-Run from any directory: python /path/to/checkout/tools/benchmark_miner.py
+Run from any directory: python /path/to/checkout/tools/benchmark_worker.py
 Default timing reuses the header-dependent right operand, as the runtime does.
 Use --uncached for preparation without reuse, or --stages to instrument native
 operations individually (additional synchronizations affect overall timing).
 Use --optimized for the benchmark-only packed 8x8 backend. It compares every
-transcript word with the runtime on a separate nonce before timing.
-Compilation, this check, and warmup are excluded from measured iterations. Hashrate counts
+transcript word with the runtime on a separate batch seed before timing.
+Compilation, this check, and warmup are excluded from measured iterations. Throughput counts
 one operation for each m*n*k product, matching the runtime's rate accounting.
 """
 import argparse
@@ -62,7 +62,7 @@ def benchmark(args, overrides):
         raise SystemExit('A CUDA GPU is required for this benchmark.')
     load_official_helpers(root / 'src' / 'work_helpers')
     compute = getattr(protocol, 'compute_batch', None) or protocol.search_batch
-    # Synthetic valid header and deterministic nonce seeds; no user configuration
+    # Synthetic valid header and deterministic batch seeds; no user configuration
     # or identity is read and no connection or submission is made.
     header = bytes(72) + (0x207fffff).to_bytes(4, 'little')
     job = TrainingJob('offline-benchmark', header, 0, 3, 1,
@@ -143,7 +143,7 @@ def benchmark(args, overrides):
             values = {'prepare_ms': (prepared - start) * 1000,
                       'compute_ms': (end - prepared) * 1000,
                       'total_ms': (end - start) * 1000,
-                      'TH/s': cfg.m * cfg.n * cfg.k / (end - start) / 1e12}
+                      'TOPS': cfg.m * cfg.n * cfg.k / (end - start) / 1e12}
             print(json.dumps({'iteration': index, 'warmup': index < args.warmup, **values}), flush=True)
             if index >= args.warmup:
                 samples.append(values)
@@ -151,7 +151,7 @@ def benchmark(args, overrides):
         median = {key: statistics.median(sample[key] for sample in samples) for key in samples[0]}
         total_seconds = sum(sample['total_ms'] for sample in samples) / 1000
         print(json.dumps({'median': median,
-                          'aggregate_TH/s': cfg.m * cfg.n * cfg.k * len(samples) / total_seconds / 1e12}), flush=True)
+                          'aggregate_TOPS': cfg.m * cfg.n * cfg.k * len(samples) / total_seconds / 1e12}), flush=True)
         if args.stages:
             print(json.dumps({'stages': {name: {'calls': len(values), 'total_ms': sum(values),
                                                'median_ms': statistics.median(values)}

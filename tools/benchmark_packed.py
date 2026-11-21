@@ -1,8 +1,5 @@
 """CUDA implementation for the benchmark-only packed operand and transcript layout."""
 import ctypes
-from pathlib import Path
-import subprocess
-import tempfile
 
 import torch
 
@@ -10,15 +7,10 @@ import torch
 def packed_kernels(device):
     from workrunner import native_cuda
 
-    sources = Path(__file__).with_name('cuda')
-    major, minor = torch.cuda.get_device_capability(device)
-    with tempfile.TemporaryDirectory(prefix='pearl-benchmark-') as build:
-        output = Path(build) / 'packed.so'
-        subprocess.run(['nvcc', '-O3', '-std=c++17', '--shared', '-Xcompiler=-fPIC',
-                        f'-arch=sm_{major}{minor}', '-I', str(native_cuda.SOURCE),
-                        str(sources / 'benchmark_preparation.cu'), str(sources / 'benchmark_transcripts.cu'),
-                        '-o', str(output)], check=True)
-        lib = ctypes.CDLL(str(output))
+    from workrunner.native_text_codec import library_path
+
+    native_cuda.load_native(device)
+    lib = ctypes.CDLL(str(library_path().with_name('libbenchmark_packed.so')))
     pointer = ctypes.c_void_p
     lib.benchmark_noise.argtypes = [ctypes.c_int] * 4 + [pointer] * 5
     lib.benchmark_noise.restype = ctypes.c_int

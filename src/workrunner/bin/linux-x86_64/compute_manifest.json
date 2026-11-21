@@ -1,0 +1,34 @@
+{
+  "artifacts": {
+    "libbenchmark_packed.so": "0bbbf2fd2419e3982ad21960dcf54e323277b6e5cce6c67ff29de0e24726580b",
+    "libnative_cuda.so": "1c285779ffc4ec6486edaeffb1b14cd2b1706c036a5cffbc53e5dfbc2953cd80",
+    "libstream_digest.so": "0583322989e8983f1dfe02a7cea3a3864e8a37f13977a8adf0f15cf30beb3bde"
+  },
+  "cuda_architectures": [
+    "100",
+    "103",
+    "110",
+    "120",
+    "121",
+    "75",
+    "80",
+    "86",
+    "87",
+    "88",
+    "89",
+    "90"
+  ],
+  "cuda_compiler": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+  "platform": "linux-x86_64",
+  "sources": {
+    "native/production/src/workrunner/cuda/candidate_filter.cu": "ed91ce43b7d9e0022ecd0176c0563eb62166df9887451b704d4707aaa00151f2",
+    "native/production/src/workrunner/cuda/digest_core.cuh": "909b5810d643b1cdff121009bbc81448e0bfe012663dbdbac4f4d23bd231ccce",
+    "native/production/src/workrunner/cuda/preparation.cu": "95ccba5db137887f242d3d75904ec3fc4f7a255c0207a41de4fb2484c97397e7",
+    "native/production/src/workrunner/cuda/runtime.cu": "c224b7caf1cb64b73fc7e5702cf642dcc73d53a3eb4cb980475244eb84288d3d",
+    "native/production/src/workrunner/cuda/transcripts.cu": "db7abd9daa47ada696a49554945f1a612f40b1d3cd8c27140ef37a073cf04815",
+    "native/production/src/workrunner/cuda/tree.cu": "e25a9b2a59a7df5446f1bf4a4e0e048082e2d3d7253d05132194a1377d2b8488",
+    "native/production/src/workrunner/stream_digest_native.cpp": "395fdb553763735b32585d109b44c2a9c693fc065acf51b77ee69a3eb5863c57",
+    "native/production/tools/cuda/benchmark_preparation.cu": "fcf685f003bb22a0c87175375bd099738dfe5a094c667f5a691444ada5c692e2",
+    "native/production/tools/cuda/benchmark_transcripts.cu": "105b5686b59448a2572c458386a63a10d66e466b1d67e3e848c1baf07e616ba7"
+  }
+}

@@ -1,16 +1,10 @@
 import ctypes
 from functools import lru_cache
-import hashlib
 import operator
-import os
-from pathlib import Path
-import platform
-import shutil
 import struct
-import subprocess
 import threading
 
-from .paths import cache_dir
+from .native_text_codec import library_path
 from .string_codec import customDecoder
 from .training_artifacts import artifacts_enabled
 
@@ -28,28 +22,9 @@ def _native():
 
 @lru_cache(maxsize=2)
 def _load_native(allow_build):
-    compiler = shutil.which('c++')
-    module = Path(__file__)
-    source = module.with_name(module.stem + '_native.cpp')
-    if compiler is None or os.name != 'posix' or not source.is_file():
-        return None
     try:
         with _BUILD_LOCK:
-            identity = source.read_bytes() + platform.machine().encode() + platform.system().encode()
-            folder = cache_dir() / 'digest'
-            library = folder / (module.stem + '-' + hashlib.sha256(identity).hexdigest()[:16] + '.so')
-            if not library.is_file():
-                if not allow_build:
-                    return None
-                folder.mkdir(parents=True, exist_ok=True)
-                temporary = library.with_suffix(f'.{os.getpid()}.tmp.so')
-                try:
-                    subprocess.run([compiler, '-O3', '-std=c++17', '-shared', '-fPIC',
-                                    str(source), '-o', str(temporary)],
-                                   check=True, capture_output=True, timeout=60)
-                    temporary.replace(library)
-                finally:
-                    temporary.unlink(missing_ok=True)
+            library = library_path().with_name('libstream_digest.so')
             binding = ctypes.CDLL(str(library))
             pointer = ctypes.c_void_p
             binding.cnn3_context_size.argtypes = []
@@ -74,7 +49,7 @@ def _load_native(allow_build):
             if binding.cnn3_context_align() > ctypes.alignment(ctypes.c_uint64):
                 return None
             return binding
-    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+    except (OSError, ValueError, AttributeError, RuntimeError):
         return None
 
 

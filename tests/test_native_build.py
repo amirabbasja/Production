@@ -1,10 +1,11 @@
 from pathlib import Path
+import json
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from workrunner import native_cuda
+from workrunner import native_cuda, stream_digest
 from workrunner.training_artifacts import training_output
 
 
@@ -12,76 +13,74 @@ class NativeBuildTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.cache = Path(temporary.name) / 'cache'
-        self.builds = []
+        self.folder = Path(temporary.name)
         self.library = object()
+        (self.folder / 'compute_manifest.json').write_text(json.dumps({'cuda_architectures': ['75']}))
+        (self.folder / 'libnative_cuda.so').write_bytes(b'test library')
         patches = [
             patch.object(native_cuda, '_LIBRARIES', {}),
-            patch.object(native_cuda, 'cache_dir', return_value=self.cache),
+            patch.object(native_cuda, 'library_path', return_value=self.folder / 'libword_codec.so'),
             patch.object(native_cuda.torch.cuda, 'is_available', return_value=True),
             patch.object(native_cuda.torch.cuda, 'get_device_capability', return_value=(7, 5)),
-            patch.object(native_cuda.shutil, 'which', return_value='/cuda/bin/nvcc'),
             patch.object(native_cuda.ctypes, 'CDLL', side_effect=self.load_library),
             patch.object(native_cuda, '_configure', return_value=self.library),
-            patch.object(native_cuda.subprocess, 'run', side_effect=self.compile_library),
         ]
         for mock_patch in patches:
             mock_patch.start()
             self.addCleanup(mock_patch.stop)
 
-    def compile_library(self, command, **kwargs):
-        output = Path(command[-1])
-        self.builds.append(output)
-        output.write_bytes(b'test library')
-        return subprocess.CompletedProcess(command, 0, stdout='', stderr='')
-
     def load_library(self, path):
-        self.assertTrue(Path(path).is_file(), 'library must exist until dlopen finishes')
+        if not Path(path).is_file():
+            raise OSError('missing shared library')
         return self.library
 
-    def test_fresh_quiet_run_builds_temporarily_and_reuses_loaded_library(self):
-        with training_output(False):
-            self.assertIs(native_cuda.load_native(), self.library)
-            self.assertIs(native_cuda.load_native(), self.library)
-        self.assertEqual(len(self.builds), 1)
-        self.assertFalse(self.builds[0].parent.exists())
-        self.assertFalse(self.cache.exists())
-
-    def test_artifact_enabled_build_is_cached_for_later_quiet_runs(self):
-        self.assertIs(native_cuda.load_native(), self.library)
-        self.assertEqual(len(self.builds), 1)
-        build_directory = self.builds[0].parent
-        self.assertTrue((build_directory / 'build.log').is_file())
-        self.assertEqual(len(list(build_directory.glob('*.so'))), 1)
-        native_cuda._LIBRARIES.clear()
-        with training_output(False):
-            self.assertIs(native_cuda.load_native(), self.library)
-        self.assertEqual(len(self.builds), 1)
-
-    def test_quiet_build_failure_preserves_diagnostic_and_cleans_up(self):
-        def fail(command, **kwargs):
-            self.compile_library(command, **kwargs)
-            return subprocess.CompletedProcess(command, 1, stdout='', stderr='unsupported GPU architecture')
-
-        with patch.object(native_cuda.subprocess, 'run', side_effect=fail):
+    def test_quiet_and_normal_runs_load_bundled_library_without_compiling(self):
+        with patch.object(subprocess, 'run', side_effect=AssertionError('production must not compile')):
             with training_output(False):
-                with self.assertRaisesRegex(native_cuda.NativeUnavailable, 'unsupported GPU architecture'):
-                    native_cuda.load_native()
-        self.assertFalse(self.builds[0].parent.exists())
-        self.assertFalse(self.cache.exists())
+                self.assertIs(native_cuda.load_native(), self.library)
+                self.assertIs(native_cuda.load_native(), self.library)
+            self.assertIs(native_cuda.load_native(), self.library)
+        self.assertEqual(native_cuda.ctypes.CDLL.call_count, 1)
+        self.assertEqual(set(path.name for path in self.folder.iterdir()),
+                         {'compute_manifest.json', 'libnative_cuda.so'})
+
+    def test_unsupported_gpu_has_explicit_error(self):
+        with patch.object(native_cuda.torch.cuda, 'get_device_capability', return_value=(6, 1)):
+            with self.assertRaisesRegex(native_cuda.NativeUnavailable, 'no bundled CUDA kernels for sm_61'):
+                native_cuda.load_native()
         self.assertEqual(native_cuda._LIBRARIES, {})
 
-    def test_quiet_build_timeout_cleans_up(self):
-        def timeout(command, **kwargs):
-            self.compile_library(command, **kwargs)
-            raise subprocess.TimeoutExpired(command, 180)
-
-        with patch.object(native_cuda.subprocess, 'run', side_effect=timeout):
-            with training_output(False):
-                with self.assertRaises(native_cuda.NativeUnavailable):
+    def test_missing_and_invalid_manifest_have_explicit_errors(self):
+        manifest = self.folder / 'compute_manifest.json'
+        for content in (None, 'invalid JSON', '{}'):
+            with self.subTest(content=content):
+                if content is None:
+                    manifest.unlink()
+                else:
+                    manifest.write_text(content)
+                with self.assertRaisesRegex(native_cuda.NativeUnavailable, 'cannot load bundled'):
                     native_cuda.load_native()
-        self.assertFalse(self.builds[0].parent.exists())
-        self.assertFalse(self.cache.exists())
+        self.assertEqual(native_cuda._LIBRARIES, {})
+
+    def test_missing_binary_has_explicit_error(self):
+        (self.folder / 'libnative_cuda.so').unlink()
+        with self.assertRaisesRegex(native_cuda.NativeUnavailable, 'missing shared library'):
+            native_cuda.load_native()
+        self.assertEqual(native_cuda._LIBRARIES, {})
+
+    def test_missing_digest_binary_uses_python_fallback(self):
+        stream_digest._load_native.cache_clear()
+        self.addCleanup(stream_digest._load_native.cache_clear)
+        with patch.object(stream_digest, 'library_path', return_value=self.folder / 'libword_codec.so'):
+            self.assertIsNone(stream_digest._load_native(False))
+            self.assertIsNone(stream_digest._load_native(True))
+
+    def test_production_has_no_cpp_or_cuda_source_files(self):
+        root = Path(__file__).resolve().parents[1]
+        suffixes = {'.c', '.cc', '.cpp', '.cxx', '.h', '.hpp', '.cu', '.cuh'}
+        sources = [path.relative_to(root) for folder in ('src', 'tools', 'tests')
+                   for path in (root / folder).rglob('*') if path.suffix in suffixes]
+        self.assertEqual(sources, [])
 
 
 if __name__ == '__main__':
