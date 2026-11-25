@@ -1,9 +1,2 @@
-.config
-config.json
 .env
-config.key
-__pycache__/
-.ipynb_checkpoints/
-.runtime/
-.venv/
-/data/
+Alter_version
